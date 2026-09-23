@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Co 1</title>
+  <link rel="stylesheet" href="/success.css">
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <h1>Test Co 1</h1>
+      <nav class="tabs" id="tabs">
+        <button class="tab active" data-view="command-center">Command Center</button>
+        <button class="tab" data-view="projects">Projects</button>
+        <button class="tab" data-view="agent-graph">Agent Graph</button>
+      </nav>
+    </header>
+
+    <main class="app-main">
+      <section id="command-center" class="view active">
+        <div class="stats" id="stats"></div>
+        <div class="panel">
+          <h2>Activity</h2>
+          <ul class="activity-feed" id="activity-feed"></ul>
+        </div>
+      </section>
+
+      <section id="projects" class="view">
+        <div id="projects-list" class="project-grid"></div>
+        <div id="project-detail" class="panel hidden"></div>
+      </section>
+
+      <section id="agent-graph" class="view">
+        <div id="graph-tree" class="graph-tree"></div>
+      </section>
+    </main>
+  </div>
+
+  <aside id="detail-panel" class="detail-panel hidden">
+    <div class="detail-panel-inner">
+      <button id="detail-close" class="detail-close" aria-label="Close">&times;</button>
+      <div id="detail-content"></div>
+    </div>
+  </aside>
+  <div id="detail-backdrop" class="detail-backdrop hidden"></div>
+
+  <script src="/success-data.js"></script>
+  <script src="/success.js"></script>
+</body>
+</html>
