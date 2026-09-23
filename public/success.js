@@ -200,10 +200,48 @@
   var agentGraphCache = null;
   var agentGraphRenderPromise = null;
 
-  function realAgentNodeHtml(agent) {
-    return '<button class="agent-node" data-agent-id="' + agent.id + '">' +
-      '<span class="status-dot ' + statusClass(agent.status) + '"></span>' +
-      agent.name + '</button>';
+  function agentCardHtml(agent) {
+    return '<div class="agent-card' + (agent.enabled ? '' : ' agent-disabled') +
+      '" data-agent-id="' + agent.id + '">' +
+      '<div class="agent-card-body" data-agent-open="' + agent.id + '">' +
+        '<div class="agent-card-top">' +
+          '<span class="status-dot ' + statusClass(agent.status) + '"></span>' +
+          '<span class="agent-card-name">' + agent.name + '</span>' +
+        '</div>' +
+        '<div class="agent-card-role">' + (agent.role || '&mdash;') + '</div>' +
+        '<span class="status-badge ' + statusClass(agent.status) + '">' + agent.status +
+          (agent.enabled ? '' : ' · OFF') + '</span>' +
+      '</div>' +
+      '<div class="agent-card-actions">' +
+        '<button class="agent-action" data-action="toggle" title="' +
+          (agent.enabled ? 'Disable' : 'Enable') + '">' + (agent.enabled ? 'Disable' : 'Enable') + '</button>' +
+        '<button class="agent-action" data-action="copy" title="Duplicate this agent">Copy</button>' +
+        '<button class="agent-action agent-action-danger" data-action="delete" title="Delete this agent">Delete</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function bindAgentCardActions(root) {
+    root.querySelectorAll('.agent-card').forEach(function (card) {
+      var agentId = card.getAttribute('data-agent-id');
+      var openTarget = card.querySelector('[data-agent-open]');
+      if (openTarget) {
+        openTarget.addEventListener('click', function () {
+          openRealAgentDetail(agentId);
+        });
+      }
+      card.querySelectorAll('.agent-action').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var action = btn.getAttribute('data-action');
+          var agent = agentGraphCache.agents[agentId];
+          if (!agent) return;
+          if (action === 'toggle') toggleAgentEnabled(agent);
+          if (action === 'copy') copyAgent(agent);
+          if (action === 'delete') deleteAgent(agent);
+        });
+      });
+    });
   }
 
   function loadAndRenderAgents() {
@@ -218,27 +256,48 @@
       .then(function (data) {
         agentGraphCache = data;
 
-        treeEl.innerHTML = data.projects.map(function (project) {
+        var treeHtml = data.projects.map(function (project) {
           var workflowsHtml = project.workflows.map(function (wf) {
-            var agentsHtml = wf.agents.map(realAgentNodeHtml).join('');
+            var agentsHtml = wf.agents
+              .map(function (a) { return agentCardHtml(agentGraphCache.agents[a.id]); })
+              .join('');
             return '<div class="graph-workflow">' +
               '<div class="wf-name">' + wf.name + '</div>' +
               '<div class="graph-agents">' + agentsHtml + '</div>' +
               '</div>';
           }).join('');
 
+          var otherAgentsHtml = '';
+          if (project.otherAgents && project.otherAgents.length) {
+            var otherCards = project.otherAgents
+              .map(function (a) { return agentCardHtml(agentGraphCache.agents[a.id]); })
+              .join('');
+            otherAgentsHtml = '<div class="graph-workflow">' +
+              '<div class="wf-name">Other agents in this project</div>' +
+              '<div class="graph-agents">' + otherCards + '</div>' +
+              '</div>';
+          }
+
           return '<div class="graph-project" data-project-id="' + project.id + '">' +
             '<div class="proj-name">' + project.name +
             ' <span class="status-badge ' + statusClass(project.status) + '">' + project.status + '</span></div>' +
             workflowsHtml +
+            otherAgentsHtml +
             '</div>';
         }).join('');
 
-        treeEl.querySelectorAll('.agent-node[data-agent-id]').forEach(function (node) {
-          node.addEventListener('click', function () {
-            openRealAgentDetail(node.getAttribute('data-agent-id'));
-          });
-        });
+        var unassignedHtml = '';
+        if (data.unassigned && data.unassigned.length) {
+          unassignedHtml = '<div class="graph-project graph-unassigned">' +
+            '<div class="proj-name">Unassigned Agents</div>' +
+            '<div class="graph-agents">' +
+              data.unassigned.map(agentCardHtml).join('') +
+            '</div>' +
+          '</div>';
+        }
+
+        treeEl.innerHTML = treeHtml + unassignedHtml;
+        bindAgentCardActions(treeEl);
 
         return data;
       })
@@ -253,8 +312,77 @@
     return agentGraphRenderPromise;
   }
 
+  function reloadAgents() {
+    agentGraphRenderPromise = null;
+    return ensureAgentsRendered();
+  }
+
   function renderAgents() {
     ensureAgentsRendered();
+  }
+
+  function toggleAgentEnabled(agent) {
+    fetch('/api/agents/' + agent.id, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !agent.enabled }),
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error('Request failed: ' + r.status);
+        return r.json();
+      })
+      .then(function () { reloadAgents(); })
+      .catch(function () { alert('Could not update agent — is the API configured?'); });
+  }
+
+  function copyAgent(agent) {
+    fetch('/api/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: agent.name + ' (Copy)',
+        description: agent.role,
+        status: 'IDLE',
+        model: agent.model,
+        max_concurrency: agent.maxConcurrency,
+        enabled: agent.enabled,
+        capabilities: agent.capabilities,
+        project_id: agent.projectId,
+      }),
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error('Request failed: ' + r.status);
+        return r.json();
+      })
+      .then(function () { reloadAgents(); })
+      .catch(function () { alert('Could not copy agent — is the API configured?'); });
+  }
+
+  function agentUsedInWorkflow(agentId) {
+    if (!agentGraphCache) return false;
+    return agentGraphCache.projects.some(function (p) {
+      return p.workflows.some(function (wf) {
+        return wf.agents.some(function (a) { return a.id === agentId; });
+      });
+    });
+  }
+
+  function deleteAgent(agent) {
+    var warning = agentUsedInWorkflow(agent.id)
+      ? ' This agent is used in at least one workflow — removing it will leave that step unresolved.'
+      : '';
+    if (!confirm('Delete ' + agent.name + '?' + warning + ' This cannot be undone.')) return;
+
+    fetch('/api/agents/' + agent.id, { method: 'DELETE' })
+      .then(function (r) {
+        if (!r.ok) throw new Error('Request failed: ' + r.status);
+        return r.json();
+      })
+      .then(function () {
+        closeAgentDetail();
+        reloadAgents();
+      })
+      .catch(function () { alert('Could not delete agent — is the API configured?'); });
   }
 
   // ---- Home → Agents navigation ----
@@ -333,6 +461,15 @@
     backdrop.classList.remove('hidden');
   }
 
+  function projectSelectHtml(currentProjectId) {
+    var options = '<option value=""' + (!currentProjectId ? ' selected' : '') + '>Unassigned</option>';
+    (agentGraphCache.projects || []).forEach(function (p) {
+      options += '<option value="' + p.id + '"' +
+        (p.id === currentProjectId ? ' selected' : '') + '>' + p.name + '</option>';
+    });
+    return '<select id="cfg-project">' + options + '</select>';
+  }
+
   function renderRealAgentDetail(agent) {
     var skillsHtml = (agent.capabilities || []).map(function (s) {
       return '<span class="tool-chip">' + s + '</span>';
@@ -367,6 +504,7 @@
         '<div class="config-form">' +
         '<label>Model<input type="text" id="cfg-model" value="' + (agent.model || '') + '" placeholder="e.g. claude-sonnet-5" /></label>' +
         '<label>Max concurrency<input type="number" id="cfg-concurrency" min="1" value="' + agent.maxConcurrency + '" /></label>' +
+        '<label>Project' + projectSelectHtml(agent.projectId) + '</label>' +
         '<label class="cfg-checkbox"><input type="checkbox" id="cfg-enabled" ' + (agent.enabled ? 'checked' : '') + ' /> Enabled</label>' +
         '<button id="cfg-save-btn">Save</button>' +
         '<span id="cfg-save-status" class="cfg-save-status"></span>' +
@@ -419,11 +557,14 @@
 
   function saveConfig(agentId) {
     var statusEl = document.getElementById('cfg-save-status');
+    var projectValue = document.getElementById('cfg-project').value;
     var body = {
       model: document.getElementById('cfg-model').value.trim() || null,
       max_concurrency: parseInt(document.getElementById('cfg-concurrency').value, 10) || 1,
       enabled: document.getElementById('cfg-enabled').checked,
+      project_id: projectValue || null,
     };
+    var projectChanged = body.project_id !== agentGraphCache.agents[agentId].projectId;
 
     statusEl.textContent = 'Saving…';
     fetch('/api/agents/' + agentId, {
@@ -440,7 +581,9 @@
         agent.model = updated.model;
         agent.maxConcurrency = updated.max_concurrency;
         agent.enabled = updated.enabled;
+        agent.projectId = updated.project_id;
         statusEl.textContent = 'Saved.';
+        if (projectChanged) reloadAgents();
       })
       .catch(function () {
         statusEl.textContent = 'Failed to save.';

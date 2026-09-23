@@ -279,6 +279,7 @@ app.get('/api/agent-graph', async (req, res) => {
         model: a.model,
         maxConcurrency: a.max_concurrency,
         enabled: a.enabled,
+        projectId: a.project_id,
         capabilities: a.capabilities || [],
         currentTask: runningEvent ? runningEvent.payload.message : null,
         lastEvent: aEvents[0] && aEvents[0].payload ? aEvents[0].payload.message : null,
@@ -312,37 +313,98 @@ app.get('/api/agent-graph', async (req, res) => {
       });
     });
 
-    const projects = projectsR.rows.map((p) => ({
-      id: p.id,
-      name: p.name,
-      status: p.status,
-      workflows: workflowsByProject[p.id] || [],
-    }));
+    const projects = projectsR.rows.map((p) => {
+      const workflows = workflowsByProject[p.id] || [];
+      const agentIdsInWorkflows = new Set();
+      workflows.forEach((w) => w.agents.forEach((a) => agentIdsInWorkflows.add(a.id)));
+      const otherAgents = agentsR.rows
+        .filter((a) => a.project_id === p.id && !agentIdsInWorkflows.has(a.id))
+        .map((a) => ({ id: a.id, name: a.name, status: a.status }));
+      return {
+        id: p.id,
+        name: p.name,
+        status: p.status,
+        workflows: workflows,
+        otherAgents: otherAgents,
+      };
+    });
 
-    res.json({ projects, agents: agentsById });
+    const unassigned = agentsR.rows
+      .filter((a) => !a.project_id)
+      .map((a) => agentsById[a.id]);
+
+    res.json({ projects, agents: agentsById, unassigned });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load agent graph' });
   }
 });
 
+const AGENT_PATCHABLE_FIELDS = ['model', 'max_concurrency', 'enabled', 'project_id'];
+
 app.patch('/api/agents/:id', async (req, res) => {
   try {
-    const { model, max_concurrency, enabled } = req.body;
+    const setClauses = [];
+    const values = [];
+    AGENT_PATCHABLE_FIELDS.forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+        values.push(req.body[field]);
+        setClauses.push(field + ' = $' + values.length);
+      }
+    });
+    if (setClauses.length === 0) {
+      return res.status(400).json({ error: 'No updatable fields provided' });
+    }
+    values.push(req.params.id);
     const result = await db.query(
-      `update agents set
-        model = coalesce($1, model),
-        max_concurrency = coalesce($2, max_concurrency),
-        enabled = coalesce($3, enabled)
-      where id = $4
-      returning *`,
-      [model ?? null, max_concurrency ?? null, enabled ?? null, req.params.id]
+      'update agents set ' + setClauses.join(', ') + ' where id = $' + values.length + ' returning *',
+      values
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Agent not found' });
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to update agent' });
+  }
+});
+
+app.post('/api/agents', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const result = await db.query(
+      `insert into agents
+        (name, description, type, status, model, max_concurrency, enabled, capabilities, project_id)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       returning *`,
+      [
+        b.name,
+        b.description || null,
+        b.type || null,
+        b.status || 'IDLE',
+        b.model || null,
+        b.max_concurrency || 1,
+        b.enabled !== undefined ? b.enabled : true,
+        JSON.stringify(b.capabilities || []),
+        b.project_id || null,
+      ]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to create agent' });
+  }
+});
+
+app.delete('/api/agents/:id', async (req, res) => {
+  try {
+    const result = await db.query('delete from agents where id = $1 returning id', [
+      req.params.id,
+    ]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Agent not found' });
+    res.json({ id: result.rows[0].id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to delete agent' });
   }
 });
 

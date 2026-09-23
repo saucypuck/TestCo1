@@ -76,12 +76,29 @@ The dashboard is built around these three tabs, not a flat agent list:
    here so it isn't lost. Likely shape when it happens: a `project_docs` (or
    similar) table/storage bucket holding markdown per project, surfaced both
    in this tab and to agents at run time as context.
-3. **Agents** (originally "Agent Graph") — a live org chart: `Project →
-   Workflow → Agent`, each node showing real-time state (status, current
-   task, last event, tasks today, errors) sourced from `agents`/`tasks`/
-   `events`. Clicking a node opens a detail panel where you can view/add the
-   agent's **skills** (`agents.capabilities`) and edit its **configuration**
-   (`model`, `max_concurrency`, `enabled`) — both real, persisted writes.
+3. **Agents** (originally "Agent Graph") — a real management console, not
+   just a viewer. Cards show every agent's real-time state (status, current
+   task, last event, tasks today, errors) grouped `Project → Workflow →
+   Agent`, plus an "Other agents in this project" bucket per project (an
+   agent assigned to a project but not in any of its workflow steps still
+   needs to be visible) and a top-level **Unassigned** section for agents
+   with no `project_id` at all — every row in `agents` is guaranteed to
+   render somewhere. Each card has one-click **Enable/Disable**, **Copy**
+   (clones an agent via `POST /api/agents`), and **Delete** (`DELETE
+   /api/agents/:id`, warns first if the agent is referenced by a workflow's
+   steps — steps reference agents by name in jsonb, not a DB foreign key, so
+   deletion is always safe at the DB level but can leave a step unresolved).
+   Clicking a card's body opens the detail panel: view/add **skills**
+   (`agents.capabilities`), edit **configuration** (`model`,
+   `max_concurrency`, `enabled`, and now **project** — a dropdown that
+   reassigns/unassigns via the same `PATCH`). Deliberately *not* built: a
+   blank "create new agent" form — from-scratch agent creation stays a
+   dev-time action (ask Claude Code, land via migration + real agent code,
+   push/deploy), matching Git-as-code-truth; `POST /api/agents` exists
+   purely to back Copy.
+   **Forward-looking, not built**: connecting an agent's skills to its
+   project's eventual `.md` knowledge base (see the Projects tab note above)
+   — noted here so the link isn't lost once that feature lands.
 
 Detail views and the controls they expose (wired up progressively — read-only
 first, actions later):
