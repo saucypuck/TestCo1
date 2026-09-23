@@ -11,15 +11,18 @@
     <header class="app-header">
       <h1>Test Co 1</h1>
       <nav class="tabs" id="tabs">
-        <button class="tab active" data-view="command-center">Command Center</button>
+        <button class="tab active" data-view="home">Home</button>
         <button class="tab" data-view="projects">Projects</button>
-        <button class="tab" data-view="agent-graph">Agent Graph</button>
+        <button class="tab" data-view="agents">Agents</button>
       </nav>
     </header>
 
     <main class="app-main">
-      <section id="command-center" class="view active">
-        <div class="stats" id="stats"></div>
+      <section id="home" class="view active">
+        <div class="section-label">Business</div>
+        <div class="stats" id="business-stats"></div>
+        <div class="section-label">Operations</div>
+        <div class="stats" id="ops-stats"></div>
         <div class="panel">
           <h2>Activity</h2>
           <ul class="activity-feed" id="activity-feed"></ul>
@@ -31,7 +34,7 @@
         <div id="project-detail" class="panel hidden"></div>
       </section>
 
-      <section id="agent-graph" class="view">
+      <section id="agents" class="view">
         <div id="graph-tree" class="graph-tree"></div>
       </section>
     </main>

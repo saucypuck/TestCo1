@@ -81,9 +81,20 @@ app.get('/success', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'success.html'));
 });
 
-app.get('/api/command-center', async (req, res) => {
+function formatUsd(n) {
+  return '$' + Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
+app.get('/api/home', async (req, res) => {
   try {
-    const stats = await db.query(`
+    const deals = await db.query(`
+      select
+        (select coalesce(sum(value), 0) from deals where stage = 'WON') as revenue_won,
+        (select coalesce(sum(value), 0) from deals where stage = 'OPEN') as pipeline_value,
+        (select count(*)::int from deals where stage = 'OPEN') as open_deals,
+        (select count(*)::int from deals where stage = 'WON' and closed_at >= date_trunc('month', current_date)) as closed_this_month
+    `);
+    const ops = await db.query(`
       select
         (select count(*)::int from jobs where status in ('QUEUED', 'RUNNING')) as active_jobs,
         (select count(*)::int from agents where status = 'RUNNING') as agents_running,
@@ -96,13 +107,20 @@ app.get('/api/command-center', async (req, res) => {
       order by created_at desc
       limit 10
     `);
-    const row = stats.rows[0];
+    const d = deals.rows[0];
+    const o = ops.rows[0];
     res.json({
-      stats: [
-        { label: 'Active Jobs', value: row.active_jobs },
-        { label: 'Agents Running', value: row.agents_running },
-        { label: 'Tasks Today', value: row.tasks_today },
-        { label: 'Errors', value: row.errors },
+      business: [
+        { label: 'Revenue (Won)', value: formatUsd(d.revenue_won) },
+        { label: 'Pipeline Value', value: formatUsd(d.pipeline_value) },
+        { label: 'Open Deals', value: d.open_deals },
+        { label: 'Closed This Month', value: d.closed_this_month },
+      ],
+      operations: [
+        { label: 'Active Jobs', value: o.active_jobs },
+        { label: 'Agents Running', value: o.agents_running },
+        { label: 'Tasks Today', value: o.tasks_today },
+        { label: 'Errors', value: o.errors },
       ],
       activity: activity.rows.map((e) => ({
         time: new Date(e.created_at).toLocaleTimeString('en-US', { hour12: false }),
@@ -111,7 +129,7 @@ app.get('/api/command-center', async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to load command center data' });
+    res.status(500).json({ error: 'Failed to load home data' });
   }
 });
 
@@ -122,6 +140,150 @@ app.get('/api/agents', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load agents' });
+  }
+});
+
+app.get('/api/agent-graph', async (req, res) => {
+  try {
+    const [projectsR, workflowsR, agentsR, tasksR, eventsR] = await Promise.all([
+      db.query('select * from projects order by name'),
+      db.query('select * from workflows order by name'),
+      db.query('select * from agents order by name'),
+      db.query('select * from tasks order by started_at desc nulls last limit 200'),
+      db.query(`
+        select e.id, e.type, e.payload, e.created_at, t.agent_name
+        from events e
+        left join tasks t on t.id = e.task_id
+        order by e.created_at desc
+        limit 200
+      `),
+    ]);
+
+    const tasksByAgent = {};
+    tasksR.rows.forEach((t) => {
+      (tasksByAgent[t.agent_name] = tasksByAgent[t.agent_name] || []).push(t);
+    });
+    const eventsByAgent = {};
+    eventsR.rows.forEach((e) => {
+      if (!e.agent_name) return;
+      (eventsByAgent[e.agent_name] = eventsByAgent[e.agent_name] || []).push(e);
+    });
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const agentsById = {};
+    agentsR.rows.forEach((a) => {
+      const aTasks = tasksByAgent[a.name] || [];
+      const aEvents = eventsByAgent[a.name] || [];
+      const runningTask = aTasks.find((t) => t.status === 'RUNNING');
+      const runningEvent = runningTask
+        ? aEvents.find((e) => e.payload && e.payload.message)
+        : null;
+      const tasksToday = aTasks.filter(
+        (t) => t.started_at && new Date(t.started_at) >= startOfToday
+      ).length;
+      const errors = aTasks.filter(
+        (t) => t.status === 'ERROR' && t.started_at && new Date(t.started_at) >= startOfToday
+      ).length;
+
+      agentsById[a.id] = {
+        id: a.id,
+        name: a.name,
+        role: a.description,
+        status: a.status,
+        model: a.model,
+        maxConcurrency: a.max_concurrency,
+        enabled: a.enabled,
+        capabilities: a.capabilities || [],
+        currentTask: runningEvent ? runningEvent.payload.message : null,
+        lastEvent: aEvents[0] && aEvents[0].payload ? aEvents[0].payload.message : null,
+        tasksToday,
+        errors,
+        log: aEvents.slice(0, 5).map(
+          (e) =>
+            new Date(e.created_at).toLocaleTimeString('en-US', { hour12: false }) +
+            '  ' +
+            (e.payload && e.payload.message ? e.payload.message : e.type)
+        ),
+      };
+    });
+
+    const agentsByName = {};
+    agentsR.rows.forEach((a) => {
+      agentsByName[a.name] = agentsById[a.id];
+    });
+
+    const workflowsByProject = {};
+    workflowsR.rows.forEach((w) => {
+      const steps = Array.isArray(w.steps) ? w.steps : [];
+      const wfAgents = steps
+        .map((s) => agentsByName[s.agent])
+        .filter(Boolean)
+        .map((a) => ({ id: a.id, name: a.name, status: a.status }));
+      (workflowsByProject[w.project_id] = workflowsByProject[w.project_id] || []).push({
+        id: w.id,
+        name: w.name,
+        agents: wfAgents,
+      });
+    });
+
+    const projects = projectsR.rows.map((p) => ({
+      id: p.id,
+      name: p.name,
+      status: p.status,
+      workflows: workflowsByProject[p.id] || [],
+    }));
+
+    res.json({ projects, agents: agentsById });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load agent graph' });
+  }
+});
+
+app.patch('/api/agents/:id', async (req, res) => {
+  try {
+    const { model, max_concurrency, enabled } = req.body;
+    const result = await db.query(
+      `update agents set
+        model = coalesce($1, model),
+        max_concurrency = coalesce($2, max_concurrency),
+        enabled = coalesce($3, enabled)
+      where id = $4
+      returning *`,
+      [model ?? null, max_concurrency ?? null, enabled ?? null, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Agent not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update agent' });
+  }
+});
+
+app.post('/api/agents/:id/capabilities', async (req, res) => {
+  try {
+    const skill = (req.body.skill || '').trim();
+    if (!skill) return res.status(400).json({ error: 'skill is required' });
+
+    const current = await db.query('select capabilities from agents where id = $1', [
+      req.params.id,
+    ]);
+    if (current.rows.length === 0) return res.status(404).json({ error: 'Agent not found' });
+
+    const existing = current.rows[0].capabilities || [];
+    if (existing.includes(skill)) return res.json(existing);
+
+    const updated = [...existing, skill];
+    const result = await db.query(
+      'update agents set capabilities = $1 where id = $2 returning capabilities',
+      [JSON.stringify(updated), req.params.id]
+    );
+    res.json(result.rows[0].capabilities);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to add skill' });
   }
 });
 

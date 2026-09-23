@@ -6,8 +6,13 @@ via `render.yaml`.
 
 - `/` — password gate (`test123`, hardcoded in `server.js`), client + server
   side check.
-- `/success` — post-login page. This is being built out into a "CEO
-  Terminal" agent command center; see below.
+- `/success` — post-login page, three tabs: **Home** (business + agent-ops
+  metrics, live), **Projects** (still mock data on purpose), **Agents**
+  (live org chart + editable skills/config).
+- Database: Supabase Postgres project `testco1`
+  (`iqpwpkravswicaqrbygq`) — a dedicated project, not shared with any other
+  Supabase project on the account. `DATABASE_URL` set locally in `.env`
+  (gitignored) and on Render's Environment tab.
 
 ## Active plan: CEO Terminal / Agent OS
 

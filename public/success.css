@@ -433,3 +433,76 @@ body {
   color: #999;
   margin-top: 8px;
 }
+
+.skill-add-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.skill-add-row input {
+  flex: 1;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+}
+
+.skill-add-row button {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  border: 1px solid #1a1a1a;
+  background: #1a1a1a;
+  color: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.config-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: #666;
+}
+
+.config-form label.cfg-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.config-form input[type="text"],
+.config-form input[type="number"] {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+}
+
+.config-form button {
+  align-self: flex-start;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  border: 1px solid #1a1a1a;
+  background: #1a1a1a;
+  color: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.cfg-save-status {
+  font-size: 11px;
+  color: #999;
+}
