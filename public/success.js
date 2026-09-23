@@ -362,7 +362,11 @@
       })
       .then(function () {
         statusEl.textContent = 'Saved.';
-        if ('name' in fields) renderProjectsList();
+        if ('name' in fields) {
+          renderProjectsList();
+          renderHome();
+          reloadAgents();
+        }
       })
       .catch(function () {
         statusEl.textContent = 'Failed to save.';
