@@ -5,11 +5,18 @@
   var tabs = document.querySelectorAll('.tab');
   var views = document.querySelectorAll('.view');
 
+  function activateTab(viewId) {
+    tabs.forEach(function (t) {
+      t.classList.toggle('active', t.getAttribute('data-view') === viewId);
+    });
+    views.forEach(function (v) {
+      v.classList.toggle('active', v.id === viewId);
+    });
+  }
+
   tabs.forEach(function (tab) {
     tab.addEventListener('click', function () {
-      var target = tab.getAttribute('data-view');
-      tabs.forEach(function (t) { t.classList.toggle('active', t === tab); });
-      views.forEach(function (v) { v.classList.toggle('active', v.id === target); });
+      activateTab(tab.getAttribute('data-view'));
     });
   });
 
@@ -28,10 +35,17 @@
   // ---- Home (live, via /api/home) ----
   function renderHome() {
     var businessEl = document.getElementById('business-stats');
+    var trendEl = document.getElementById('business-trend');
+    var projectsEl = document.getElementById('home-projects');
     var opsEl = document.getElementById('ops-stats');
+    var attentionEl = document.getElementById('needs-attention');
     var feedEl = document.getElementById('activity-feed');
+
     businessEl.innerHTML = '<div class="panel">Loading…</div>';
+    trendEl.innerHTML = '';
+    projectsEl.innerHTML = '';
     opsEl.innerHTML = '';
+    attentionEl.innerHTML = '';
     feedEl.innerHTML = '';
 
     fetch('/api/home')
@@ -40,13 +54,72 @@
         return r.json();
       })
       .then(function (data) {
-        businessEl.innerHTML = statCardsHtml(data.business);
-        opsEl.innerHTML = statCardsHtml(data.operations);
+        businessEl.innerHTML = statCardsHtml([
+          { label: 'Revenue (Won)', value: data.business.revenueWon },
+          { label: 'Pipeline Value', value: data.business.pipelineValue },
+          { label: 'Open Deals', value: data.business.openDeals },
+          { label: 'Closed This Month', value: data.business.closedThisMonth },
+        ]);
+        trendEl.textContent = 'This month ' + data.business.trend.thisMonth +
+          ' · Last month ' + data.business.trend.lastMonth;
+
+        projectsEl.innerHTML = data.projects.map(function (p) {
+          return '<button class="project-row" data-project-id="' + p.id + '">' +
+            '<div class="project-row-left">' +
+              '<span class="status-dot ' + statusClass(p.status) + '"></span>' + p.name +
+            '</div>' +
+            '<div class="project-row-right">' +
+              '<span><span class="metric-value">' + p.revenue + '</span> revenue</span>' +
+              '<span><span class="metric-value">' + p.pipeline + '</span> pipeline</span>' +
+              '<span><span class="metric-value">' + p.activeJobs + '</span> job' +
+                (p.activeJobs === 1 ? '' : 's') + '</span>' +
+              '<span class="status-badge ' + statusClass(p.status) + '">' + p.status + '</span>' +
+            '</div>' +
+            '</button>';
+        }).join('');
+        projectsEl.querySelectorAll('.project-row').forEach(function (row) {
+          row.addEventListener('click', function () {
+            goToProject(row.getAttribute('data-project-id'));
+          });
+        });
+
+        opsEl.innerHTML = data.operations.map(function (s) {
+          var clickable = s.label === 'Agents Running';
+          return '<div class="stat-card' + (clickable ? ' clickable-card' : '') + '"' +
+            (clickable ? ' data-goto-agents="1"' : '') + '>' +
+            '<div class="value">' + s.value + '</div><div class="label">' + s.label + '</div></div>';
+        }).join('');
+        var agentsCard = opsEl.querySelector('[data-goto-agents]');
+        if (agentsCard) {
+          agentsCard.addEventListener('click', function () { activateTab('agents'); });
+        }
+
+        attentionEl.innerHTML = data.needsAttention.length
+          ? '<ul class="attention-list">' + data.needsAttention.map(function (a) {
+              return '<li class="attention-item" data-project-id="' + (a.projectId || '') + '">' +
+                '<span class="icon">⚠</span><span>' + a.text + '</span></li>';
+            }).join('') + '</ul>'
+          : '<div class="attention-clear">All clear — nothing needs attention.</div>';
+        attentionEl.querySelectorAll('.attention-item').forEach(function (item) {
+          var pid = item.getAttribute('data-project-id');
+          if (!pid) return;
+          item.addEventListener('click', function () { goToProject(pid); });
+        });
+
         feedEl.innerHTML = data.activity.length
           ? data.activity.map(function (a) {
-              return '<li><span class="time">' + a.time + '</span><span>' + a.text + '</span></li>';
+              var clickable = !!a.agentId;
+              return '<li' + (clickable ? ' class="clickable" data-agent-id="' + a.agentId + '"' : '') + '>' +
+                '<span class="time">' + a.time + '</span><span>' + a.text +
+                (a.projectName ? '<span class="project-tag">· ' + a.projectName + '</span>' : '') +
+                '</span></li>';
             }).join('')
           : '<li>No activity yet.</li>';
+        feedEl.querySelectorAll('li.clickable').forEach(function (li) {
+          li.addEventListener('click', function () {
+            goToAgent(li.getAttribute('data-agent-id'));
+          });
+        });
       })
       .catch(function () {
         businessEl.innerHTML = '<div class="panel">Couldn\'t load — is the API configured?</div>';
@@ -125,6 +198,7 @@
 
   // ---- Agents (live, via /api/agent-graph) ----
   var agentGraphCache = null;
+  var agentGraphRenderPromise = null;
 
   function realAgentNodeHtml(agent) {
     return '<button class="agent-node" data-agent-id="' + agent.id + '">' +
@@ -132,11 +206,11 @@
       agent.name + '</button>';
   }
 
-  function renderAgents() {
+  function loadAndRenderAgents() {
     var treeEl = document.getElementById('graph-tree');
     treeEl.innerHTML = '<div class="panel">Loading…</div>';
 
-    fetch('/api/agent-graph')
+    return fetch('/api/agent-graph')
       .then(function (r) {
         if (!r.ok) throw new Error('Request failed: ' + r.status);
         return r.json();
@@ -153,7 +227,7 @@
               '</div>';
           }).join('');
 
-          return '<div class="graph-project">' +
+          return '<div class="graph-project" data-project-id="' + project.id + '">' +
             '<div class="proj-name">' + project.name +
             ' <span class="status-badge ' + statusClass(project.status) + '">' + project.status + '</span></div>' +
             workflowsHtml +
@@ -165,10 +239,42 @@
             openRealAgentDetail(node.getAttribute('data-agent-id'));
           });
         });
+
+        return data;
       })
-      .catch(function () {
+      .catch(function (err) {
         treeEl.innerHTML = '<div class="panel">Couldn\'t load — is the API configured?</div>';
+        throw err;
       });
+  }
+
+  function ensureAgentsRendered() {
+    if (!agentGraphRenderPromise) agentGraphRenderPromise = loadAndRenderAgents();
+    return agentGraphRenderPromise;
+  }
+
+  function renderAgents() {
+    ensureAgentsRendered();
+  }
+
+  // ---- Home → Agents navigation ----
+  function goToProject(projectId) {
+    activateTab('agents');
+    ensureAgentsRendered().then(function () {
+      var el = document.querySelector('.graph-project[data-project-id="' + projectId + '"]');
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('highlight');
+      setTimeout(function () { el.classList.remove('highlight'); }, 1500);
+    });
+  }
+
+  function goToAgent(agentId) {
+    if (!agentId) return;
+    activateTab('agents');
+    ensureAgentsRendered().then(function () {
+      openRealAgentDetail(agentId);
+    });
   }
 
   // ---- Agent detail panel (shared DOM, two render paths) ----

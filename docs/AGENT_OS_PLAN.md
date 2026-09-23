@@ -52,11 +52,22 @@ architecture decision.
 
 The dashboard is built around these three tabs, not a flat agent list:
 
-1. **Home** (originally "Command Center") — the CEO-level overview: business
-   metrics (revenue won, pipeline value, open deals, deals closed this
-   month — from a `deals` table) plus agent-ops metrics (active jobs, agents
-   running, tasks today, errors), plus a live activity feed. Live since the
-   Home/Agents rework.
+1. **Home** (originally "Command Center") — a strict CEO-snapshot hierarchy,
+   not a flat metrics list: **Business** (revenue won, pipeline value, open
+   deals, closed this month, plus a plain-text this-month-vs-last-month
+   trend line — no chart) → **Projects** (revenue/pipeline/active-jobs per
+   project, status Active/Idle/**Attention**, click through) →
+   **Operations** (active jobs, agents running, tasks today, errors) →
+   **Needs Attention** (a capped, real list of task errors — a project with
+   multiple surfaces as one rollup line — or an explicit "all clear" state)
+   → **Activity** (unchanged feed, now with project context and
+   click-through to the responsible agent). Every project/agent-linked item
+   is clickable and lands on the **Agents** tab (real data), not the mock
+   Projects tab. "Attention" project status is computed at read time from
+   recent task errors — not written back to `projects.status`, which stays
+   DB-truth for the real Active/Idle state. Explicit non-goal: this stays a
+   snapshot, not an analytics dashboard — no charts, no per-agent detail
+   here (that's the Agents tab).
 2. **Projects** — one row per project, click to see its workflows/agents.
    Still mock data on purpose: the plan is for this tab to eventually hold
    per-project **`.md` instructions** — industry context, the opportunity,
@@ -234,15 +245,24 @@ projects; `project_agents` (join table) can replace the FK later if an agent
 ends up belonging to more than one project at a time.
 
 `deals` backs Home's business metrics (revenue won, pipeline value, open
-deals, closed this month). Currently seeded placeholder data — nothing
-writes to it yet since no agent is closing real deals (that starts to
-become real once Phase 2's worker exists and an outreach/sales-type agent
-runs for real).
+deals, closed this month, per-project revenue/pipeline). Currently seeded
+placeholder data — nothing writes to it yet since no agent is closing real
+deals (that starts to become real once Phase 2's worker exists and an
+outreach/sales-type agent runs for real). Project/job/task/event attribution
+for all of this already works through `deals.project_id` and
+`jobs.project_id` (with `tasks`/`events` reached transitively via
+`job_id`) — no further schema changes were needed for the Home redesign.
+
+**Deferred**: Home's "Needs Attention" currently only surfaces task errors.
+A "workflow hasn't run in Nh" staleness check was considered but deliberately
+left out — checked against static seed timestamps it would flag every
+workflow noisily rather than something meaningful. Worth adding once
+workflows have real run history from Phase 2's worker.
 
 ## Immediate next step
 
 Phase 2 — job queue + worker — is the next unblocked step: it's what turns
-`currentTask`/`tasksToday`/`errors` on the Agents tab, the activity feed on
-Home, and eventually `deals`, from seeded placeholder rows into numbers a
-real agent produced. `Pause` / `Restart` / `Run Manually` also only become
-meaningful once something is actually running to act on.
+`currentTask`/`tasksToday`/`errors` on the Agents tab, the activity feed and
+Needs Attention on Home, and eventually `deals`, from seeded placeholder rows
+into numbers a real agent produced. `Pause` / `Restart` / `Run Manually` also
+only become meaningful once something is actually running to act on.

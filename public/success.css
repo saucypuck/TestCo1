@@ -80,6 +80,14 @@ body {
   padding: 16px;
 }
 
+.stat-card.clickable-card {
+  cursor: pointer;
+}
+
+.stat-card.clickable-card:hover {
+  border-color: #999;
+}
+
 .stat-card .value {
   font-size: 28px;
   font-weight: 700;
@@ -505,4 +513,111 @@ body {
 .cfg-save-status {
   font-size: 11px;
   color: #999;
+}
+
+.trend-line {
+  font-size: 12px;
+  color: #666;
+  margin: -8px 0 20px;
+}
+
+.project-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid #f0f0f0;
+  cursor: pointer;
+  background: none;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+}
+
+.project-row:last-child {
+  border-bottom: none;
+}
+
+.project-row:hover {
+  background: #fafafa;
+}
+
+.project-row-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.project-row-right {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 12px;
+  color: #666;
+  flex-shrink: 0;
+}
+
+.project-row-right .metric-value {
+  color: #1a1a1a;
+  font-weight: 600;
+}
+
+.status-dot.attention {
+  background: #d9534f;
+}
+
+.status-badge.attention {
+  background: #fbe8e7;
+  color: #c0392b;
+}
+
+.attention-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.attention-item {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.attention-item:hover {
+  text-decoration: underline;
+}
+
+.attention-item .icon {
+  color: #d9534f;
+}
+
+.attention-clear {
+  font-size: 13px;
+  color: #2fa84f;
+}
+
+.activity-feed li.clickable {
+  cursor: pointer;
+}
+
+.activity-feed li.clickable:hover {
+  text-decoration: underline;
+}
+
+.activity-feed .project-tag {
+  color: #999;
+  margin-left: 6px;
+}
+
+.graph-project.highlight {
+  border-color: #1a1a1a;
+  box-shadow: 0 0 0 2px rgba(26, 26, 26, 0.15);
 }

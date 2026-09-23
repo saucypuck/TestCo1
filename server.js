@@ -87,44 +87,128 @@ function formatUsd(n) {
 
 app.get('/api/home', async (req, res) => {
   try {
-    const deals = await db.query(`
-      select
-        (select coalesce(sum(value), 0) from deals where stage = 'WON') as revenue_won,
-        (select coalesce(sum(value), 0) from deals where stage = 'OPEN') as pipeline_value,
-        (select count(*)::int from deals where stage = 'OPEN') as open_deals,
-        (select count(*)::int from deals where stage = 'WON' and closed_at >= date_trunc('month', current_date)) as closed_this_month
-    `);
-    const ops = await db.query(`
-      select
-        (select count(*)::int from jobs where status in ('QUEUED', 'RUNNING')) as active_jobs,
-        (select count(*)::int from agents where status = 'RUNNING') as agents_running,
-        (select count(*)::int from tasks where started_at >= current_date) as tasks_today,
-        (select count(*)::int from tasks where status = 'ERROR' and started_at >= current_date) as errors
-    `);
-    const activity = await db.query(`
-      select id, type, payload, created_at
-      from events
-      order by created_at desc
-      limit 10
-    `);
-    const d = deals.rows[0];
-    const o = ops.rows[0];
+    const [dealsR, trendR, projectsR, opsR, attentionR, activityR, agentsR] = await Promise.all([
+      db.query(`
+        select
+          (select coalesce(sum(value), 0) from deals where stage = 'WON') as revenue_won,
+          (select coalesce(sum(value), 0) from deals where stage = 'OPEN') as pipeline_value,
+          (select count(*)::int from deals where stage = 'OPEN') as open_deals,
+          (select count(*)::int from deals where stage = 'WON' and closed_at >= date_trunc('month', current_date)) as closed_this_month
+      `),
+      db.query(`
+        select
+          (select coalesce(sum(value), 0) from deals where stage = 'WON'
+             and closed_at >= date_trunc('month', current_date)) as this_month,
+          (select coalesce(sum(value), 0) from deals where stage = 'WON'
+             and closed_at >= date_trunc('month', current_date - interval '1 month')
+             and closed_at < date_trunc('month', current_date)) as last_month
+      `),
+      db.query(`
+        select p.id, p.name, p.status,
+          coalesce(sum(d.value) filter (where d.stage = 'WON'), 0) as revenue,
+          coalesce(sum(d.value) filter (where d.stage = 'OPEN'), 0) as pipeline,
+          (select count(*)::int from jobs j where j.project_id = p.id
+             and j.status in ('QUEUED', 'RUNNING')) as active_jobs
+        from projects p
+        left join deals d on d.project_id = p.id
+        group by p.id, p.name, p.status
+        order by p.name
+      `),
+      db.query(`
+        select
+          (select count(*)::int from jobs where status in ('QUEUED', 'RUNNING')) as active_jobs,
+          (select count(*)::int from agents where status = 'RUNNING') as agents_running,
+          (select count(*)::int from tasks where started_at >= current_date) as tasks_today,
+          (select count(*)::int from tasks where status = 'ERROR' and started_at >= current_date) as errors
+      `),
+      db.query(`
+        select t.id as task_id, t.agent_name, j.project_id, p.name as project_name,
+          (select e.payload->>'message' from events e where e.task_id = t.id
+             order by e.created_at desc limit 1) as message
+        from tasks t
+        join jobs j on j.id = t.job_id
+        left join projects p on p.id = j.project_id
+        where t.status = 'ERROR' and t.started_at >= now() - interval '48 hours'
+        order by t.started_at desc
+      `),
+      db.query(`
+        select e.id, e.type, e.payload, e.created_at, t.agent_name, j.project_id, p.name as project_name
+        from events e
+        left join tasks t on t.id = e.task_id
+        left join jobs j on j.id = e.job_id
+        left join projects p on p.id = j.project_id
+        order by e.created_at desc
+        limit 10
+      `),
+      db.query('select id, name from agents'),
+    ]);
+
+    const d = dealsR.rows[0];
+    const trend = trendR.rows[0];
+    const o = opsR.rows[0];
+
+    const attentionByProject = {};
+    attentionR.rows.forEach((row) => {
+      const key = row.project_id || 'none';
+      (attentionByProject[key] = attentionByProject[key] || []).push(row);
+    });
+    const needsAttention = [];
+    Object.keys(attentionByProject).forEach((key) => {
+      const rows = attentionByProject[key];
+      if (rows.length > 1) {
+        needsAttention.push({
+          text: (rows[0].project_name || 'Unassigned') + ' has ' + rows.length + ' failed tasks',
+          projectId: rows[0].project_id,
+          projectName: rows[0].project_name,
+        });
+      } else {
+        const row = rows[0];
+        needsAttention.push({
+          text: row.message || row.agent_name + ' reported an error',
+          projectId: row.project_id,
+          projectName: row.project_name,
+        });
+      }
+    });
+    const topAttention = needsAttention.slice(0, 5);
+    const attentionProjectIds = new Set(needsAttention.map((a) => a.projectId).filter(Boolean));
+
+    const agentIdByName = {};
+    agentsR.rows.forEach((a) => {
+      agentIdByName[a.name] = a.id;
+    });
+
     res.json({
-      business: [
-        { label: 'Revenue (Won)', value: formatUsd(d.revenue_won) },
-        { label: 'Pipeline Value', value: formatUsd(d.pipeline_value) },
-        { label: 'Open Deals', value: d.open_deals },
-        { label: 'Closed This Month', value: d.closed_this_month },
-      ],
+      business: {
+        revenueWon: formatUsd(d.revenue_won),
+        pipelineValue: formatUsd(d.pipeline_value),
+        openDeals: d.open_deals,
+        closedThisMonth: d.closed_this_month,
+        trend: {
+          thisMonth: formatUsd(trend.this_month),
+          lastMonth: formatUsd(trend.last_month),
+        },
+      },
+      projects: projectsR.rows.map((p) => ({
+        id: p.id,
+        name: p.name,
+        status: attentionProjectIds.has(p.id) ? 'ATTENTION' : p.status,
+        revenue: formatUsd(p.revenue),
+        pipeline: formatUsd(p.pipeline),
+        activeJobs: p.active_jobs,
+      })),
       operations: [
         { label: 'Active Jobs', value: o.active_jobs },
         { label: 'Agents Running', value: o.agents_running },
         { label: 'Tasks Today', value: o.tasks_today },
         { label: 'Errors', value: o.errors },
       ],
-      activity: activity.rows.map((e) => ({
+      needsAttention: topAttention,
+      activity: activityR.rows.map((e) => ({
         time: new Date(e.created_at).toLocaleTimeString('en-US', { hour12: false }),
         text: e.payload && e.payload.message ? e.payload.message : e.type,
+        projectName: e.project_name || null,
+        agentId: e.agent_name ? agentIdByName[e.agent_name] || null : null,
       })),
     });
   } catch (err) {
