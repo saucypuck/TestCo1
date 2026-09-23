@@ -1,6 +1,4 @@
 (function () {
-  var DATA = window.MOCK_DATA; // still used by the Projects tab only
-
   // ---- Tabs ----
   var tabs = document.querySelectorAll('.tab');
   var views = document.querySelectorAll('.view');
@@ -126,74 +124,346 @@
       });
   }
 
-  // ---- Projects (mock data — unchanged) ----
-  function mockAgentNodeHtml(agentId) {
-    var agent = DATA.agents[agentId];
-    if (!agent) return '';
-    return '<button class="agent-node" data-mock-agent-id="' + agent.id + '">' +
-      '<span class="status-dot ' + statusClass(agent.status) + '"></span>' +
-      agent.name + '</button>';
-  }
-
+  // ---- Projects (live, via /api/projects) ----
   function renderProjectsList() {
     var listEl = document.getElementById('projects-list');
-    listEl.innerHTML = DATA.projects.map(function (p) {
-      return '<button class="project-card" data-project-id="' + p.id + '">' +
-        '<div class="name">' + p.name + '</div>' +
-        '<div class="desc">' + p.description + '</div>' +
-        '<span class="status-badge ' + statusClass(p.status) + '">' + p.status + '</span>' +
-        '</button>';
-    }).join('');
+    listEl.innerHTML = '<div class="panel">Loading…</div>';
 
-    listEl.querySelectorAll('.project-card').forEach(function (card) {
-      card.addEventListener('click', function () {
-        showProjectDetail(card.getAttribute('data-project-id'));
+    fetch('/api/projects')
+      .then(function (r) {
+        if (!r.ok) throw new Error('Request failed: ' + r.status);
+        return r.json();
+      })
+      .then(function (projects) {
+        listEl.innerHTML = projects.map(function (p) {
+          return '<button class="project-card" data-project-id="' + p.id + '">' +
+            '<div class="name">' + p.name + '</div>' +
+            '<div class="desc">' + (p.description || '') + '</div>' +
+            '<span class="status-badge ' + statusClass(p.status) + '">' + p.status + '</span>' +
+            '</button>';
+        }).join('');
+
+        listEl.querySelectorAll('.project-card').forEach(function (card) {
+          card.addEventListener('click', function () {
+            showProjectDetail(card.getAttribute('data-project-id'));
+          });
+        });
+      })
+      .catch(function () {
+        listEl.innerHTML = '<div class="panel">Couldn\'t load — is the API configured?</div>';
       });
-    });
+  }
+
+  function projectAgentChipHtml(agent) {
+    return '<span class="agent-node" data-agent-id="' + agent.id + '">' +
+      '<span class="status-dot ' + statusClass(agent.status) + '"></span>' +
+      agent.name + '</span>';
   }
 
   function showProjectDetail(projectId) {
-    var project = DATA.projects.find(function (p) { return p.id === projectId; });
-    if (!project) return;
-
     var listEl = document.getElementById('projects-list');
     var detailEl = document.getElementById('project-detail');
     listEl.classList.add('hidden');
     detailEl.classList.remove('hidden');
+    detailEl.innerHTML = '<button class="back-link" id="back-to-projects">&larr; All projects</button>' +
+      '<div class="panel">Loading…</div>';
+    document.getElementById('back-to-projects').addEventListener('click', function () {
+      detailEl.classList.add('hidden');
+      listEl.classList.remove('hidden');
+    });
 
-    var workflowsHtml = project.workflowIds.map(function (wfId) {
-      var wf = DATA.workflows[wfId];
-      var stepsHtml = wf.steps.map(mockAgentNodeHtml).join('<span class="arrow">&rarr;</span>');
-      return '<div class="workflow-block">' +
-        '<div class="wf-name">' + wf.name + '</div>' +
-        '<div class="workflow-steps">' + stepsHtml + '</div>' +
-        '</div>';
-    }).join('');
+    fetch('/api/projects/' + projectId)
+      .then(function (r) {
+        if (!r.ok) throw new Error('Request failed: ' + r.status);
+        return r.json();
+      })
+      .then(function (project) {
+        renderProjectDetail(project, listEl, detailEl);
+      })
+      .catch(function () {
+        detailEl.innerHTML = '<button class="back-link" id="back-to-projects">&larr; All projects</button>' +
+          '<div class="panel">Couldn\'t load — is the API configured?</div>';
+        document.getElementById('back-to-projects').addEventListener('click', function () {
+          detailEl.classList.add('hidden');
+          listEl.classList.remove('hidden');
+        });
+      });
+  }
 
-    var agentsHtml = project.agentIds.map(mockAgentNodeHtml).join(' ');
+  function formatFileSize(bytes) {
+    if (bytes == null) return '';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function renderProjectDetail(project, listEl, detailEl) {
+    var workflowsHtml = project.workflows.length
+      ? project.workflows.map(function (wf) {
+          var agentsHtml = wf.agents.map(projectAgentChipHtml).join('');
+          return '<div class="workflow-block">' +
+            '<div class="wf-name">' + wf.name + '</div>' +
+            '<div class="workflow-steps">' + agentsHtml + '</div>' +
+            '</div>';
+        }).join('')
+      : '<div class="v">No workflows yet.</div>';
+
+    var jobsHtml = project.jobs.length
+      ? '<ul class="job-list">' + project.jobs.map(function (j) {
+          return '<li><span class="status-badge ' + statusClass(j.status) + '">' + j.status + '</span>' +
+            ' <span>' + (j.workflowName || 'Job') + '</span></li>';
+        }).join('') + '</ul>'
+      : '<div class="v">No jobs yet.</div>';
+
+    var activityHtml = project.activity.length
+      ? project.activity.map(function (a) {
+          var clickable = !!a.agentId;
+          return '<li' + (clickable ? ' class="clickable" data-agent-id="' + a.agentId + '"' : '') + '>' +
+            '<span class="time">' + a.time + '</span><span>' + a.text + '</span></li>';
+        }).join('')
+      : '<li>No activity yet.</li>';
+
+    var logsHtml = project.logs.length
+      ? project.logs.map(function (l) {
+          return '<div class="log-entry">' +
+            '<div class="log-entry-meta">' +
+              '<span class="tool-chip">' + (l.authorName || l.authorType) + '</span>' +
+              '<span class="time">' + new Date(l.createdAt).toLocaleString() + '</span>' +
+            '</div>' +
+            '<div class="log-entry-content">' + l.content + '</div>' +
+            '</div>';
+        }).join('')
+      : '<div class="v">No log entries yet.</div>';
+
+    var filesHtml = project.files.length
+      ? '<ul class="file-list">' + project.files.map(function (f) {
+          return '<li data-file-id="' + f.id + '">' +
+            '<div class="file-info">' +
+              '<span class="file-name">' + f.filename + '</span>' +
+              '<span class="file-meta">' + formatFileSize(f.sizeBytes) + ' &middot; ' +
+                (f.uploadedBy || 'Unknown') + ' &middot; ' + new Date(f.createdAt).toLocaleDateString() +
+              '</span>' +
+            '</div>' +
+            '<div class="file-actions">' +
+              '<a class="agent-action" href="/api/projects/' + project.id + '/files/' + f.id + '">Download</a>' +
+              '<button class="agent-action agent-action-danger" data-delete-file="' + f.id + '">Delete</button>' +
+            '</div>' +
+            '</li>';
+        }).join('') + '</ul>'
+      : '<div class="v">No files yet.</div>';
 
     detailEl.innerHTML =
       '<button class="back-link" id="back-to-projects">&larr; All projects</button>' +
+
       '<div class="project-detail-header">' +
-      '<span class="name">' + project.name + '</span>' +
+      '<input type="text" id="proj-name-input" class="proj-name-input" value="' +
+        project.name.replace(/"/g, '&quot;') + '" />' +
       '<span class="status-badge ' + statusClass(project.status) + '">' + project.status + '</span>' +
       '</div>' +
-      '<div class="project-detail-desc">' + project.description + '</div>' +
-      '<div class="section-label">Workflows</div>' +
-      workflowsHtml +
-      '<div class="section-label">Agents</div>' +
-      '<div>' + agentsHtml + '</div>';
+      '<textarea id="proj-desc-input" class="proj-desc-input" placeholder="Short description…">' +
+        (project.description || '') + '</textarea>' +
+      '<div class="proj-save-row">' +
+        '<button id="proj-header-save">Save name &amp; description</button>' +
+        '<span id="proj-header-save-status" class="cfg-save-status"></span>' +
+      '</div>' +
+
+      '<div class="section-label">Project Details</div>' +
+      '<div class="panel">' +
+        '<textarea id="proj-details-input" class="proj-details-input" placeholder="Industry, opportunity, instructions for agents working this project…">' +
+          (project.details || '') + '</textarea>' +
+        '<div class="proj-save-row">' +
+          '<button id="proj-details-save">Save details</button>' +
+          '<span id="proj-details-save-status" class="cfg-save-status"></span>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="section-label">Stage Status</div>' +
+      '<div class="panel">' +
+        '<div class="v" style="margin-bottom:8px;">Workflows</div>' +
+        workflowsHtml +
+        '<div class="v" style="margin:12px 0 8px;">Jobs</div>' +
+        jobsHtml +
+      '</div>' +
+
+      '<div class="section-label">Activity</div>' +
+      '<div class="panel"><ul class="activity-feed">' + activityHtml + '</ul></div>' +
+
+      '<div class="section-label">Log</div>' +
+      '<div class="panel">' +
+        '<div id="proj-logs">' + logsHtml + '</div>' +
+        '<div class="log-add-row">' +
+          '<textarea id="proj-log-input" placeholder="Add a note…"></textarea>' +
+          '<button id="proj-log-add-btn">Post</button>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="section-label">Files</div>' +
+      '<div class="panel">' +
+        '<div id="proj-files">' + filesHtml + '</div>' +
+        '<div class="file-add-row">' +
+          '<input type="file" id="proj-file-input" />' +
+          '<button id="proj-file-upload-btn">Upload</button>' +
+          '<span id="proj-file-upload-status" class="cfg-save-status"></span>' +
+        '</div>' +
+        '<div class="detail-controls-note">Max 5MB per file.</div>' +
+      '</div>';
 
     document.getElementById('back-to-projects').addEventListener('click', function () {
       detailEl.classList.add('hidden');
       listEl.classList.remove('hidden');
     });
 
-    detailEl.querySelectorAll('.agent-node[data-mock-agent-id]').forEach(function (node) {
+    detailEl.querySelectorAll('.agent-node[data-agent-id]').forEach(function (node) {
       node.addEventListener('click', function () {
-        openMockAgentDetail(node.getAttribute('data-mock-agent-id'));
+        goToAgent(node.getAttribute('data-agent-id'));
       });
     });
+    detailEl.querySelectorAll('li.clickable[data-agent-id]').forEach(function (li) {
+      li.addEventListener('click', function () {
+        goToAgent(li.getAttribute('data-agent-id'));
+      });
+    });
+
+    document.getElementById('proj-header-save').addEventListener('click', function () {
+      saveProjectField(project.id, {
+        name: document.getElementById('proj-name-input').value.trim(),
+        description: document.getElementById('proj-desc-input').value.trim(),
+      }, 'proj-header-save-status');
+    });
+    document.getElementById('proj-details-save').addEventListener('click', function () {
+      saveProjectField(project.id, {
+        details: document.getElementById('proj-details-input').value,
+      }, 'proj-details-save-status');
+    });
+    document.getElementById('proj-log-add-btn').addEventListener('click', function () {
+      addProjectLog(project.id);
+    });
+    document.getElementById('proj-file-upload-btn').addEventListener('click', function () {
+      uploadProjectFile(project.id);
+    });
+    detailEl.querySelectorAll('[data-delete-file]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        deleteProjectFile(project.id, btn.getAttribute('data-delete-file'));
+      });
+    });
+  }
+
+  function saveProjectField(projectId, fields, statusElId) {
+    var statusEl = document.getElementById(statusElId);
+    statusEl.textContent = 'Saving…';
+    fetch('/api/projects/' + projectId, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fields),
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error('Request failed: ' + r.status);
+        return r.json();
+      })
+      .then(function () {
+        statusEl.textContent = 'Saved.';
+        if ('name' in fields) renderProjectsList();
+      })
+      .catch(function () {
+        statusEl.textContent = 'Failed to save.';
+      });
+  }
+
+  function addProjectLog(projectId) {
+    var input = document.getElementById('proj-log-input');
+    var content = input.value.trim();
+    if (!content) return;
+
+    fetch('/api/projects/' + projectId + '/logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: content }),
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error('Request failed: ' + r.status);
+        return r.json();
+      })
+      .then(function (entry) {
+        input.value = '';
+        var logsEl = document.getElementById('proj-logs');
+        var emptyState = logsEl.querySelector('.v');
+        if (emptyState) logsEl.innerHTML = '';
+        var entryHtml = '<div class="log-entry">' +
+          '<div class="log-entry-meta">' +
+            '<span class="tool-chip">' + entry.authorName + '</span>' +
+            '<span class="time">' + new Date(entry.createdAt).toLocaleString() + '</span>' +
+          '</div>' +
+          '<div class="log-entry-content">' + entry.content + '</div>' +
+          '</div>';
+        logsEl.insertAdjacentHTML('afterbegin', entryHtml);
+      })
+      .catch(function () {
+        alert('Could not post log entry — is the API configured?');
+      });
+  }
+
+  function uploadProjectFile(projectId) {
+    var input = document.getElementById('proj-file-input');
+    var statusEl = document.getElementById('proj-file-upload-status');
+    var file = input.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      statusEl.textContent = 'File is larger than 5MB.';
+      return;
+    }
+
+    var formData = new FormData();
+    formData.append('file', file);
+
+    statusEl.textContent = 'Uploading…';
+    fetch('/api/projects/' + projectId + '/files', { method: 'POST', body: formData })
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || 'Upload failed'); });
+        return r.json();
+      })
+      .then(function (f) {
+        statusEl.textContent = '';
+        input.value = '';
+        var filesEl = document.getElementById('proj-files');
+        var emptyState = filesEl.querySelector('.v');
+        if (emptyState) filesEl.innerHTML = '<ul class="file-list"></ul>';
+        var list = filesEl.querySelector('.file-list');
+        var li = document.createElement('li');
+        li.setAttribute('data-file-id', f.id);
+        li.innerHTML = '<div class="file-info">' +
+            '<span class="file-name">' + f.filename + '</span>' +
+            '<span class="file-meta">' + formatFileSize(f.sizeBytes) + ' &middot; ' +
+              f.uploadedBy + ' &middot; ' + new Date(f.createdAt).toLocaleDateString() +
+            '</span>' +
+          '</div>' +
+          '<div class="file-actions">' +
+            '<a class="agent-action" href="/api/projects/' + projectId + '/files/' + f.id + '">Download</a>' +
+            '<button class="agent-action agent-action-danger" data-delete-file="' + f.id + '">Delete</button>' +
+          '</div>';
+        list.appendChild(li);
+        li.querySelector('[data-delete-file]').addEventListener('click', function () {
+          deleteProjectFile(projectId, f.id);
+        });
+      })
+      .catch(function (err) {
+        statusEl.textContent = err.message || 'Upload failed.';
+      });
+  }
+
+  function deleteProjectFile(projectId, fileId) {
+    if (!confirm('Delete this file? This cannot be undone.')) return;
+    fetch('/api/projects/' + projectId + '/files/' + fileId, { method: 'DELETE' })
+      .then(function (r) {
+        if (!r.ok) throw new Error('Request failed: ' + r.status);
+        return r.json();
+      })
+      .then(function () {
+        var li = document.querySelector('#proj-files li[data-file-id="' + fileId + '"]');
+        if (li) li.remove();
+      })
+      .catch(function () {
+        alert('Could not delete file — is the API configured?');
+      });
   }
 
   // ---- Agents (live, via /api/agent-graph) ----
@@ -409,48 +679,6 @@
   var panel = document.getElementById('detail-panel');
   var backdrop = document.getElementById('detail-backdrop');
   var content = document.getElementById('detail-content');
-
-  function openMockAgentDetail(agentId) {
-    var agent = DATA.agents[agentId];
-    if (!agent) return;
-
-    var toolsHtml = agent.tools.map(function (t) {
-      return '<span class="tool-chip">' + t + '</span>';
-    }).join('');
-
-    var logHtml = agent.log.length
-      ? agent.log.map(function (l) { return '<div>' + l + '</div>'; }).join('')
-      : '<div>No recent activity.</div>';
-
-    content.innerHTML =
-      '<div class="detail-title">' + agent.name + '</div>' +
-      '<div class="detail-role">' + agent.role + ' &middot; <span class="status-badge ' +
-        statusClass(agent.status) + '">' + agent.status + '</span></div>' +
-      '<div class="detail-field"><div class="k">Current task</div><div class="v">' +
-        (agent.currentTask || '&mdash;') + '</div></div>' +
-      '<div class="detail-field"><div class="k">Started</div><div class="v">' +
-        (agent.startedAgo || '&mdash;') + '</div></div>' +
-      '<div class="detail-field"><div class="k">Last event</div><div class="v">' +
-        (agent.lastEvent || '&mdash;') + '</div></div>' +
-      '<div class="detail-field"><div class="k">Tasks today</div><div class="v">' +
-        agent.tasksToday + '</div></div>' +
-      '<div class="detail-field"><div class="k">Errors</div><div class="v">' +
-        agent.errors + '</div></div>' +
-      '<div class="detail-field"><div class="k">Tools</div><div class="detail-tools">' +
-        toolsHtml + '</div></div>' +
-      '<div class="detail-field"><div class="k">Log</div><div class="detail-log">' +
-        logHtml + '</div></div>' +
-      '<div class="detail-controls">' +
-      '<button disabled title="Available once the job queue lands (Phase 2+)">Pause</button>' +
-      '<button disabled title="Available once the job queue lands (Phase 2+)">Restart</button>' +
-      '<button disabled title="Available once the job queue lands (Phase 2+)">Run Manually</button>' +
-      '<button disabled title="Available once the job queue lands (Phase 2+)">Edit Configuration</button>' +
-      '</div>' +
-      '<div class="detail-controls-note">Controls are read-only in this phase &mdash; see docs/AGENT_OS_PLAN.md.</div>';
-
-    panel.classList.remove('hidden');
-    backdrop.classList.remove('hidden');
-  }
 
   function openRealAgentDetail(agentId) {
     if (!agentGraphCache) return;

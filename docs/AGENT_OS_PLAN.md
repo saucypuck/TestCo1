@@ -68,14 +68,23 @@ The dashboard is built around these three tabs, not a flat agent list:
    DB-truth for the real Active/Idle state. Explicit non-goal: this stays a
    snapshot, not an analytics dashboard — no charts, no per-agent detail
    here (that's the Agents tab).
-2. **Projects** — one row per project, click to see its workflows/agents.
-   Still mock data on purpose: the plan is for this tab to eventually hold
-   per-project **`.md` instructions** — industry context, the opportunity,
-   whatever an agent needs to know to work a project competently — readable
-   by both humans and agents. Not scoped/built yet; capturing the intent
-   here so it isn't lost. Likely shape when it happens: a `project_docs` (or
-   similar) table/storage bucket holding markdown per project, surfaced both
-   in this tab and to agents at run time as context.
+2. **Projects** — no longer mock, a real project workspace. Click a card
+   for: an editable **name/description** (`PATCH /api/projects/:id`); a
+   **Project Details** block (`projects.details`, free text — the
+   per-project knowledge base this doc had been tracking: industry,
+   opportunity, whatever an agent needs to know to work the project
+   competently); **Stage Status** (this project's workflows/agents and jobs,
+   reusing the same resolution logic as `/api/agent-graph`, scoped to one
+   project); the project-scoped **Activity** feed; an append-only **Log**
+   (`project_logs` — timestamped entries, never edited after posting, just
+   added to; `author_type` is `human` or `agent` — the `human` path is real
+   and used by this UI today, the `agent` path is real and seeded with a
+   couple of example entries but has no automatic caller until Phase 2's
+   worker exists to post real ones); and **Files** (`project_files`,
+   uploaded/downloaded/deleted through the app, stored as `bytea` directly
+   in Postgres rather than Supabase Storage — works with the existing
+   `DATABASE_URL` connection, no new credentials, capped at 5MB/file — fine
+   for reports and docs, not a fit for large media).
 3. **Agents** (originally "Agent Graph") — a real management console, not
    just a viewer. Cards show every agent's real-time state (status, current
    task, last event, tasks today, errors) grouped `Project → Workflow →
@@ -96,9 +105,10 @@ The dashboard is built around these three tabs, not a flat agent list:
    dev-time action (ask Claude Code, land via migration + real agent code,
    push/deploy), matching Git-as-code-truth; `POST /api/agents` exists
    purely to back Copy.
-   **Forward-looking, not built**: connecting an agent's skills to its
-   project's eventual `.md` knowledge base (see the Projects tab note above)
-   — noted here so the link isn't lost once that feature lands.
+   **Forward-looking, not built**: the Projects tab's Details/Log now
+   exists for real (see the Projects entry above) — surfacing an agent's
+   skills there, or having an agent's `project_logs` reports reference which
+   skill produced them, is still an open connection to make later.
 
 Detail views and the controls they expose (wired up progressively — read-only
 first, actions later):

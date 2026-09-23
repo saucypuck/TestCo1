@@ -1,8 +1,14 @@
 const express = require('express');
 const path = require('path');
+const multer = require('multer');
 const db = require('./db');
 const app = express();
 const port = process.env.PORT || 3000;
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -430,6 +436,229 @@ app.post('/api/agents/:id/capabilities', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to add skill' });
+  }
+});
+
+app.get('/api/projects', async (req, res) => {
+  try {
+    const result = await db.query(
+      'select id, name, description, status from projects order by name'
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load projects' });
+  }
+});
+
+app.get('/api/projects/:id', async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    const [projectR, workflowsR, agentsR, jobsR, activityR, logsR, filesR] = await Promise.all([
+      db.query('select * from projects where id = $1', [projectId]),
+      db.query('select * from workflows where project_id = $1 order by name', [projectId]),
+      db.query('select id, name, status from agents'),
+      db.query(
+        `select j.id, j.status, j.started_at, j.completed_at, w.name as workflow_name
+         from jobs j
+         left join workflows w on w.id = j.workflow_id
+         where j.project_id = $1
+         order by j.started_at desc nulls last`,
+        [projectId]
+      ),
+      db.query(
+        `select e.id, e.type, e.payload, e.created_at, t.agent_name
+         from events e
+         left join tasks t on t.id = e.task_id
+         left join jobs j on j.id = e.job_id
+         where j.project_id = $1
+         order by e.created_at desc
+         limit 20`,
+        [projectId]
+      ),
+      db.query('select * from project_logs where project_id = $1 order by created_at desc limit 50', [
+        projectId,
+      ]),
+      db.query(
+        `select id, filename, content_type, size_bytes, uploaded_by, created_at
+         from project_files where project_id = $1 order by created_at desc`,
+        [projectId]
+      ),
+    ]);
+
+    if (projectR.rows.length === 0) return res.status(404).json({ error: 'Project not found' });
+    const project = projectR.rows[0];
+
+    const agentsByName = {};
+    agentsR.rows.forEach((a) => {
+      agentsByName[a.name] = a;
+    });
+
+    const workflows = workflowsR.rows.map((w) => {
+      const steps = Array.isArray(w.steps) ? w.steps : [];
+      const wfAgents = steps
+        .map((s) => agentsByName[s.agent])
+        .filter(Boolean)
+        .map((a) => ({ id: a.id, name: a.name, status: a.status }));
+      return { id: w.id, name: w.name, agents: wfAgents };
+    });
+
+    res.json({
+      id: project.id,
+      name: project.name,
+      description: project.description,
+      details: project.details,
+      status: project.status,
+      workflows: workflows,
+      jobs: jobsR.rows.map((j) => ({
+        id: j.id,
+        status: j.status,
+        startedAt: j.started_at,
+        completedAt: j.completed_at,
+        workflowName: j.workflow_name,
+      })),
+      activity: activityR.rows.map((e) => ({
+        time: new Date(e.created_at).toLocaleTimeString('en-US', { hour12: false }),
+        text: e.payload && e.payload.message ? e.payload.message : e.type,
+        agentId: e.agent_name && agentsByName[e.agent_name] ? agentsByName[e.agent_name].id : null,
+      })),
+      logs: logsR.rows.map((l) => ({
+        id: l.id,
+        authorType: l.author_type,
+        authorName: l.author_name,
+        content: l.content,
+        createdAt: l.created_at,
+      })),
+      files: filesR.rows.map((f) => ({
+        id: f.id,
+        filename: f.filename,
+        contentType: f.content_type,
+        sizeBytes: f.size_bytes,
+        uploadedBy: f.uploaded_by,
+        createdAt: f.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load project' });
+  }
+});
+
+const PROJECT_PATCHABLE_FIELDS = ['name', 'description', 'details'];
+
+app.patch('/api/projects/:id', async (req, res) => {
+  try {
+    const setClauses = [];
+    const values = [];
+    PROJECT_PATCHABLE_FIELDS.forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+        values.push(req.body[field]);
+        setClauses.push(field + ' = $' + values.length);
+      }
+    });
+    if (setClauses.length === 0) {
+      return res.status(400).json({ error: 'No updatable fields provided' });
+    }
+    values.push(req.params.id);
+    const result = await db.query(
+      'update projects set ' + setClauses.join(', ') + ' where id = $' + values.length + ' returning *',
+      values
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Project not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update project' });
+  }
+});
+
+app.post('/api/projects/:id/logs', async (req, res) => {
+  try {
+    const content = (req.body.content || '').trim();
+    if (!content) return res.status(400).json({ error: 'content is required' });
+
+    const result = await db.query(
+      `insert into project_logs (project_id, author_type, author_name, content)
+       values ($1, 'human', 'You', $2)
+       returning *`,
+      [req.params.id, content]
+    );
+    const l = result.rows[0];
+    res.status(201).json({
+      id: l.id,
+      authorType: l.author_type,
+      authorName: l.author_name,
+      content: l.content,
+      createdAt: l.created_at,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to add log entry' });
+  }
+});
+
+app.post('/api/projects/:id/files', (req, res) => {
+  upload.single('file')(req, res, async (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'File is larger than the 5MB limit' });
+      }
+      console.error(err);
+      return res.status(400).json({ error: 'Upload failed' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'file is required' });
+
+    try {
+      const result = await db.query(
+        `insert into project_files (project_id, filename, content_type, size_bytes, data, uploaded_by)
+         values ($1, $2, $3, $4, $5, 'You')
+         returning id, filename, content_type, size_bytes, uploaded_by, created_at`,
+        [req.params.id, req.file.originalname, req.file.mimetype, req.file.size, req.file.buffer]
+      );
+      const f = result.rows[0];
+      res.status(201).json({
+        id: f.id,
+        filename: f.filename,
+        contentType: f.content_type,
+        sizeBytes: f.size_bytes,
+        uploadedBy: f.uploaded_by,
+        createdAt: f.created_at,
+      });
+    } catch (dbErr) {
+      console.error(dbErr);
+      res.status(500).json({ error: 'Failed to save file' });
+    }
+  });
+});
+
+app.get('/api/projects/:id/files/:fileId', async (req, res) => {
+  try {
+    const result = await db.query(
+      'select filename, content_type, data from project_files where id = $1 and project_id = $2',
+      [req.params.fileId, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'File not found' });
+    const f = result.rows[0];
+    res.set('Content-Type', f.content_type || 'application/octet-stream');
+    res.set('Content-Disposition', 'attachment; filename="' + f.filename.replace(/"/g, '') + '"');
+    res.send(f.data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load file' });
+  }
+});
+
+app.delete('/api/projects/:id/files/:fileId', async (req, res) => {
+  try {
+    const result = await db.query(
+      'delete from project_files where id = $1 and project_id = $2 returning id',
+      [req.params.fileId, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'File not found' });
+    res.json({ id: result.rows[0].id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to delete file' });
   }
 });
 
