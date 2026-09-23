@@ -501,6 +501,30 @@ body {
 .graph-project .proj-name {
   font-weight: 700;
   font-size: 15px;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.graph-project .proj-name::-webkit-details-marker {
+  display: none;
+}
+
+.graph-project .proj-name::before {
+  content: '\25B8';
+  font-size: 11px;
+  color: #999;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+
+.graph-project[open] > .proj-name::before {
+  transform: rotate(90deg);
+}
+
+.graph-project[open] > .proj-name {
   margin-bottom: 4px;
   padding-bottom: 10px;
   border-bottom: 1px solid #f0f0f0;
@@ -509,6 +533,10 @@ body {
 .graph-project.graph-unassigned {
   border-style: dashed;
   background: #fafafa;
+}
+
+.graph-workflow-top .wf-name {
+  color: #1a1a1a;
 }
 
 .graph-workflow {

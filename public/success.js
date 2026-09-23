@@ -546,28 +546,32 @@
             var otherCards = project.otherAgents
               .map(function (a) { return agentCardHtml(agentGraphCache.agents[a.id]); })
               .join('');
-            otherAgentsHtml = '<div class="graph-workflow">' +
-              '<div class="wf-name">Other agents in this project</div>' +
+            otherAgentsHtml = '<div class="graph-workflow graph-workflow-top">' +
+              '<div class="wf-name">Project Leadership</div>' +
               '<div class="graph-agents">' + otherCards + '</div>' +
               '</div>';
           }
 
-          return '<div class="graph-project" data-project-id="' + project.id + '">' +
-            '<div class="proj-name">' + project.name +
-            ' <span class="status-badge ' + statusClass(project.status) + '">' + project.status + '</span></div>' +
-            workflowsHtml +
+          return '<details class="graph-project" data-project-id="' + project.id + '">' +
+            '<summary class="proj-name">' + project.name +
+            ' <span class="status-badge ' + statusClass(project.status) + '">' + project.status + '</span></summary>' +
+            '<div class="graph-project-body">' +
             otherAgentsHtml +
-            '</div>';
+            workflowsHtml +
+            '</div>' +
+            '</details>';
         }).join('');
 
         var unassignedHtml = '';
         if (data.unassigned && data.unassigned.length) {
-          unassignedHtml = '<div class="graph-project graph-unassigned">' +
-            '<div class="proj-name">Unassigned Agents</div>' +
+          unassignedHtml = '<details class="graph-project graph-unassigned">' +
+            '<summary class="proj-name">Unassigned Agents</summary>' +
+            '<div class="graph-project-body">' +
             '<div class="graph-agents">' +
               data.unassigned.map(agentCardHtml).join('') +
             '</div>' +
-          '</div>';
+            '</div>' +
+          '</details>';
         }
 
         treeEl.innerHTML = treeHtml + unassignedHtml;
@@ -665,6 +669,7 @@
     ensureAgentsRendered().then(function () {
       var el = document.querySelector('.graph-project[data-project-id="' + projectId + '"]');
       if (!el) return;
+      el.open = true;
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       el.classList.add('highlight');
       setTimeout(function () { el.classList.remove('highlight'); }, 1500);
